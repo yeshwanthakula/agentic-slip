@@ -1,0 +1,145 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-qwen
+  labels:
+    app: vllm
+    model: qwen-0.5b
+spec:
+  replicas: 0  # Start with 0 for serverless - KEDA will scale up
+  selector:
+    matchLabels:
+      app: vllm
+      model: qwen-0.5b
+  template:
+    metadata:
+      labels:
+        app: vllm
+        model: qwen-0.5b
+      annotations:
+        # KEDA scaling annotations
+        autoscaling.keda.sh/paused: "false"
+    spec:
+      # Tolerate GPU node taints and prefer spot instances
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+        - key: kubernetes.io/arch
+          operator: Equal
+          value: amd64
+          effect: NoSchedule
+      
+      # Node selection for GPU spot instances
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: karpenter.sh/capacity-type
+                    operator: In
+                    values: ["spot"]  # Prefer spot instances
+                  - key: node.kubernetes.io/instance-type
+                    operator: In
+                    values: ["g4dn.xlarge", "g5.xlarge"]  # GPU instance types
+      
+      containers:
+        - name: vllm-server
+          image: vllm/vllm-openai:latest  # Official vLLM OpenAI-compatible image
+          ports:
+            - containerPort: 8000
+              name: http
+          
+          # Resource requests/limits optimized for free tier and spot instances
+          resources:
+            requests:
+              memory: "4Gi"
+              cpu: "1000m"
+              nvidia.com/gpu: 1
+            limits:
+              memory: "8Gi"
+              cpu: "2000m"
+              nvidia.com/gpu: 1
+          
+          # vLLM server configuration
+          env:
+            - name: MODEL_NAME
+              value: "Qwen/Qwen1.5-0.5B-Chat"  # Hugging Face model ID
+            - name: HOST
+              value: "0.0.0.0"
+            - name: PORT
+              value: "8000"
+            - name: SERVED_MODEL_NAME
+              value: "qwen-0.5b"
+          
+          # Command to start vLLM with optimizations for small model
+          command:
+            - python
+            - -m
+            - vllm.entrypoints.openai.api_server
+          args:
+            - --model=$(MODEL_NAME)
+            - --host=$(HOST)
+            - --port=$(PORT)
+            - --served-model-name=$(SERVED_MODEL_NAME)
+            - --trust-remote-code  # Required for Qwen models
+            - --max-model-len=2048  # Limit context for memory efficiency
+            - --gpu-memory-utilization=0.8  # Use 80% of GPU memory
+            - --tensor-parallel-size=1  # Single GPU
+            - --download-dir=/model-cache  # Cache location
+            - --disable-log-requests  # Reduce logging for performance
+          
+          # Volume mounts for model caching
+          volumeMounts:
+            - name: model-cache
+              mountPath: /model-cache
+          
+          # Health checks
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 300  # Give time for model download
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          
+          readinessProbe:
+            httpGet:
+              path: /v1/models
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 5
+      
+      # Volumes
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: vllm-model-storage
+      
+      # Restart policy
+      restartPolicy: Always
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-service
+  labels:
+    app: vllm
+spec:
+  type: ClusterIP
+  selector:
+    app: vllm
+    model: qwen-0.5b
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      protocol: TCP

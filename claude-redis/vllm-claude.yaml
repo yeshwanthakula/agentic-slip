@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-service
+  labels:
+    app: vllm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm
+  template:
+    metadata:
+      labels:
+        app: vllm
+    spec:
+      containers:
+      - name: vllm
+        image: vllm/vllm-openai:v0.4.2
+        ports:
+        - containerPort: 8000
+        args:
+          - --model=facebook/opt-125m
+          - --host=0.0.0.0
+          - --port=8000
+          - --max-model-len=128
+          - --disable-log-requests
+          - --tensor-parallel-size=1
+          - --dtype=float32
+          - --max-num-seqs=1
+          - --swap-space=0
+          - --disable-custom-all-reduce
+          - --enforce-eager
+          - --block-size=4
+          - --max-num-batched-tokens=128
+        env:
+        - name: CUDA_VISIBLE_DEVICES
+          value: ""
+        - name: VLLM_CPU_KVCACHE_SPACE
+          value: "0.2"
+        - name: HF_HOME
+          value: "/tmp/hf_cache"
+        - name: HF_HUB_DISABLE_TELEMETRY
+          value: "1"
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "1500m"
+          limits:
+            memory: "6Gi"
+            cpu: "3000m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 90
+          periodSeconds: 15
+          timeoutSeconds: 10
+          failureThreshold: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 150
+          periodSeconds: 30
+          timeoutSeconds: 15
+          failureThreshold: 3
+        volumeMounts:
+        - name: cache-volume
+          mountPath: /tmp/hf_cache
+      volumes:
+      - name: cache-volume
+        emptyDir:
+          sizeLimit: 1Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-service
+  labels:
+    app: vllm
+spec:
+  type: ClusterIP
+  selector:
+    app: vllm
+  ports:
+  - protocol: TCP
+    port: 8000
+    targetPort: 8000

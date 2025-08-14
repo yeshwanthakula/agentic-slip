@@ -1,0 +1,26 @@
+apiVersion: karpenter.k8s.aws/v1beta1
+kind: EC2NodeClass
+metadata:
+  name: default
+spec:
+  # AMI configuration
+  amiFamily: AL2
+  
+  # Instance profile (replace with your cluster's node instance profile)
+  instanceProfile: "KarpenterNodeInstanceProfile-your-cluster-name"
+  
+  # Subnet and security group selection
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: "your-cluster-name"  # Replace with your cluster name
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: "your-cluster-name"  # Replace with your cluster name
+  
+  # User data for node initialization
+  userData: |
+    #!/bin/bash
+    /etc/eks/bootstrap.sh your-cluster-name  # Replace with your cluster name
+    
+    # Optional: Pre-pull vLLM image to reduce cold start time
+    docker pull vllm/vllm-openai:v0.3.3 &

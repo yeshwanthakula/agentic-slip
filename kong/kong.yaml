@@ -1,0 +1,48 @@
+# kong.yaml - Simplified Kong configuration for resume project
+
+_format_version: "3.0"
+
+# Service definition
+services:
+  - name: llm-stream-api
+    url: http://producer:8001/generate  # Updated to use producer service
+    routes:
+      - name: llm-stream-route
+        paths:
+          - /api/llm/stream
+        strip_path: false
+        protocols:
+          - http
+          - https
+    plugins:
+      # OAuth 2.0 for authentication
+      - name: oauth2
+        config:
+          enable_authorization_code: true
+          mandatory_scope: false
+          token_expiration: 3600  # 1 hour
+          
+      # Rate limiting for authenticated users
+      - name: rate-limiting
+        config:
+          limit_by: credential
+          minute: 30  # 30 requests per minute for authenticated users
+          policy: local
+          fault_tolerant: true
+
+      # Rate limiting for unauthenticated users  
+      - name: rate-limiting
+        config:
+          limit_by: ip
+          minute: 5   # 5 requests per minute for unauthenticated users
+          policy: local
+          
+# Consumer definitions
+consumers:
+  - username: authorized-user
+    plugins:
+      - name: oauth2
+        config:
+          name: Authorized Client
+          client_id: auth-client-id
+          client_secret: auth-client-secret

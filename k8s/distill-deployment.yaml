@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: distill-gpt
+  labels:
+    app: distill-gpt
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: distill-gpt
+  template:
+    metadata:
+      labels:
+        app: distill-gpt
+    spec:
+      containers:
+      - name: distill
+        image: distill-gpt-api
+        imagePullPolicy: "IfNotPresent"
+        ports:
+        - containerPort: 8000
+        volumeMounts:
+        - name: distill-data
+          mountPath: /app/model
+      volumes:
+      - name: distill-data
+        persistentVolumeClaim:
+          claimName: distill-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: distill-gpt
+  labels:
+    app: distill-gpt
+spec:
+  type: NodePort
+  selector:
+    app: distill-gpt
+  ports:
+  - port: 8000
+    targetPort: 8000

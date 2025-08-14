@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: 
+  name: redis 
+  labels:
+    app: redis
+spec: 
+  replicas: 1
+  selector: 
+    matchLabels: 
+      app: redis 
+  template: 
+    metadata: 
+      labels: 
+        app: redis 
+    spec: 
+      containers: 
+      - name: redis 
+        image: redis:6.2-alpine 
+        ports:
+        - containerPort: 6379
+        volumeMounts:
+        - name: redis-config-volume
+          mountPath: /usr/local/etc/redis/redis.conf
+          subPath: redis.conf
+        command: 
+          - redis-server
+        args:
+          - /usr/local/etc/redis/redis.conf
+          # - --requirepass
+          # - $(REDIS_PASSWORD)
+        # env:
+        # - name: REDIS_PASSWORD
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: redis-secret
+        #       key: redis-password
+        livenessProbe:
+          tcpSocket:
+            port: 6379
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+        readinessProbe:
+          tcpSocket:
+            port: 6379
+          initialDelaySeconds: 5
+          timeoutSeconds: 1
+      volumes:
+      - name: redis-config-volume
+        configMap:
+          name: redis-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  type: ClusterIP
+  selector:
+    app: redis 
+  ports:
+  - protocol: TCP
+    port: 6379
+    targetPort: 6379
+
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: vllm-scaler
+  labels:
+    app: vllm
+spec:
+  scaleTargetRef:
+    name: vllm-qwen  # Target the vLLM deployment
+  minReplicaCount: 0  # Scale to zero
+  maxReplicaCount: 2  # Max 2 pods for cost control
+  pollingInterval: 15  # Check every 15 seconds
+  cooldownPeriod: 60  # Wait 1 minutes before scaling down
+  triggers:
+  - type: redis-streams
+    metadata:
+      address: redis.default.svc.cluster.local:6379
+      # passwordFromEnv: REDIS_PASSWORD
+      stream: payload  # Redis stream name
+      consumerGroup: group1
+      pendingEntriesCount: "2"  # 1 pod per 3 pending requests
